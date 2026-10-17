@@ -46,4 +46,10 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     # inflating the score.
     clean_df = clean_df.drop_duplicates()
 
+    # Not known at booking time: the assigned room is decided at check-in and
+    # booking_changes counts amendments made after the booking. The app can't
+    # ask a user for these, and the leakage check showed dropping them costs
+    # almost nothing (ROC-AUC 0.908 -> 0.902).
+    clean_df = clean_df.drop(columns=["assigned_room_type", "booking_changes"])
+
     return clean_df

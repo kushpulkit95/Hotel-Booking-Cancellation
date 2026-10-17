@@ -84,3 +84,32 @@ for name, model in models.items():
         f"{f1_score(y_test, pred):>7.3f}"
         f"{roc_auc_score(y_test, proba):>9.3f}"
     )
+
+def evaluate_rf(drop_cols):
+    """Train a Random Forest with some columns removed and return metrics.
+    Rebuilding the preprocessor each time is needed because the column
+    lists change when we drop features."""
+    Xtr = X_train.drop(columns=drop_cols)
+    Xte = X_test.drop(columns=drop_cols)
+
+    num = Xtr.select_dtypes(include="number").columns.tolist()
+    cat = [c for c in Xtr.columns if c not in num]
+
+    prep = ColumnTransformer([
+        ("num", StandardScaler(), num),
+        ("cat", OneHotEncoder(handle_unknown="ignore"), cat),
+    ])
+    pipe = Pipeline([
+        ("preprocess", prep),
+        ("model", RandomForestClassifier(n_estimators=200, n_jobs=-1, random_state=42)),
+    ])
+    pipe.fit(Xtr, y_train)
+    pred = pipe.predict(Xte)
+    proba = pipe.predict_proba(Xte)[:, 1]
+    return (
+        precision_score(y_test, pred),
+        recall_score(y_test, pred),
+        f1_score(y_test, pred),
+        roc_auc_score(y_test, proba),
+    )
+
