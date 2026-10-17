@@ -16,9 +16,10 @@ X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42, stratify=y
 )
 
-# Split columns by type: text columns need encoding, numeric ones need scaling.
-categorical_cols = X.select_dtypes(include="object").columns.tolist()
-numeric_cols = X.select_dtypes(exclude="object").columns.tolist()
+# Numeric = anything pandas recognises as a number; everything else is text/category.
+# Selecting this way avoids depending on how pandas labels string columns.
+numeric_cols = X.select_dtypes(include="number").columns.tolist()
+categorical_cols = [c for c in X.columns if c not in numeric_cols]
 
 # Models only understand numbers. One-hot encoding turns each category
 # (e.g. deposit_type = "Non Refund") into its own 0/1 column.
