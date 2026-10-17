@@ -26,6 +26,10 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     # agent: missing likely means no agent was involved — 0 as its own category.
     clean_df["agent"] = clean_df["agent"].fillna(0)
 
+    # agent is an ID, not a quantity. Converting to string makes it categorical
+    # so the model doesn't think agent 500 > agent 100.
+    clean_df["agent"] = clean_df["agent"].astype(int).astype(str)
+
     # company: ~94% missing, too sparse to use ids directly.
     # Binary flag captures the signal without needing the sparse detail.
     clean_df["has_company"] = clean_df["company"].notna().astype(int)
@@ -41,5 +45,5 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     # both train and test, the model would be tested on data it already saw,
     # inflating the score.
     clean_df = clean_df.drop_duplicates()
-    
+
     return clean_df
