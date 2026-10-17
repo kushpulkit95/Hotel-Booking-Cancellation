@@ -5,6 +5,10 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import f1_score, precision_score, recall_score
+from sklearn.tree import DecisionTreeClassifier
+
 from src.preprocessing import clean_data, load_raw_data
 
 df = clean_data(load_raw_data())
@@ -50,3 +54,33 @@ print("\nConfusion matrix:")
 print(confusion_matrix(y_test, y_pred))
 print("\n", classification_report(y_test, y_pred))
 print("ROC-AUC:", round(roc_auc_score(y_test, y_proba), 4))
+
+# Same preprocessing for every model so the comparison is fair:
+# only the model changes, nothing else.
+models = {
+    "Logistic Regression": LogisticRegression(max_iter=1000),
+    # max_depth limits how deep the tree grows. An unlimited tree memorises
+    # the training data (overfitting) and does worse on new bookings.
+    "Decision Tree": DecisionTreeClassifier(max_depth=10, random_state=42),
+    # Random Forest = many trees voting. Averaging reduces overfitting.
+    # n_jobs=-1 uses all CPU cores to speed it up.
+    "Random Forest": RandomForestClassifier(
+        n_estimators=200, n_jobs=-1, random_state=42
+    ),
+}
+
+print("\nModel comparison (class 1 = cancelled):")
+print(f"{'Model':<22}{'Precision':>10}{'Recall':>9}{'F1':>7}{'ROC-AUC':>9}")
+
+for name, model in models.items():
+    pipe = Pipeline([("preprocess", preprocessor), ("model", model)])
+    pipe.fit(X_train, y_train)
+    pred = pipe.predict(X_test)
+    proba = pipe.predict_proba(X_test)[:, 1]
+    print(
+        f"{name:<22}"
+        f"{precision_score(y_test, pred):>10.3f}"
+        f"{recall_score(y_test, pred):>9.3f}"
+        f"{f1_score(y_test, pred):>7.3f}"
+        f"{roc_auc_score(y_test, proba):>9.3f}"
+    )
