@@ -1,4 +1,6 @@
 import numpy as np
+import joblib
+from pathlib import Path
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -119,3 +121,15 @@ print(f"\nTest set at threshold {best_t:.2f}:")
 print(confusion_matrix(y_test, test_pred))
 print(classification_report(y_test, test_pred))
 print("ROC-AUC:", round(roc_auc_score(y_test, test_proba), 4))
+
+Path("model").mkdir(exist_ok=True)
+joblib.dump(
+    {
+        "pipeline": final_pipe,
+        "threshold": float(best_t),
+        "feature_columns": X.columns.tolist(),
+    },
+    "model/hotel_cancellation_model.pkl",
+    compress=3,
+)
+print("\nModel saved to model/hotel_cancellation_model.pkl")
