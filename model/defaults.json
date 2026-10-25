@@ -1,0 +1,14 @@
+{
+  "children": 0.0,
+  "babies": 0.0,
+  "meal": "BB",
+  "distribution_channel": "TA/TO",
+  "is_repeated_guest": 0.0,
+  "previous_bookings_not_canceled": 0.0,
+  "reserved_room_type": "A",
+  "agent": "9",
+  "days_in_waiting_list": 0.0,
+  "customer_type": "Transient",
+  "required_car_parking_spaces": 0.0,
+  "has_company": 0.0
+}
