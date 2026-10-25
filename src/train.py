@@ -1,21 +1,21 @@
+import numpy as np
 from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
-from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    classification_report, confusion_matrix,
+    f1_score, precision_score, recall_score, roc_auc_score,
+)
+from sklearn.model_selection import cross_val_predict, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import f1_score, precision_score, recall_score
 from sklearn.tree import DecisionTreeClassifier
 
 from src.preprocessing import clean_data, load_raw_data
 
 df = clean_data(load_raw_data())
-
 X = df.drop(columns=["is_canceled"])
 y = df["is_canceled"]
-
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42, stratify=y
 )
@@ -85,31 +85,37 @@ for name, model in models.items():
         f"{roc_auc_score(y_test, proba):>9.3f}"
     )
 
-def evaluate_rf(drop_cols):
-    """Train a Random Forest with some columns removed and return metrics.
-    Rebuilding the preprocessor each time is needed because the column
-    lists change when we drop features."""
-    Xtr = X_train.drop(columns=drop_cols)
-    Xte = X_test.drop(columns=drop_cols)
+final_pipe = Pipeline([
+    ("preprocess", preprocessor),
+    ("model", RandomForestClassifier(n_estimators=200, n_jobs=-1, random_state=42)),
+])
 
-    num = Xtr.select_dtypes(include="number").columns.tolist()
-    cat = [c for c in Xtr.columns if c not in num]
+# cross_val_predict trains on part of the training data and predicts the rest,
+# so every training row gets a probability from a model that never saw it.
+# That gives honest probabilities to tune the threshold on, without touching X_test.
+oof_proba = cross_val_predict(
+    final_pipe, X_train, y_train, cv=3, method="predict_proba"
+)[:, 1]
 
-    prep = ColumnTransformer([
-        ("num", StandardScaler(), num),
-        ("cat", OneHotEncoder(handle_unknown="ignore"), cat),
-    ])
-    pipe = Pipeline([
-        ("preprocess", prep),
-        ("model", RandomForestClassifier(n_estimators=200, n_jobs=-1, random_state=42)),
-    ])
-    pipe.fit(Xtr, y_train)
-    pred = pipe.predict(Xte)
-    proba = pipe.predict_proba(Xte)[:, 1]
-    return (
-        precision_score(y_test, pred),
-        recall_score(y_test, pred),
-        f1_score(y_test, pred),
-        roc_auc_score(y_test, proba),
-    )
+print("\nThreshold tuning (on training data, out-of-fold):")
+print(f"{'Threshold':<11}{'Precision':>10}{'Recall':>9}{'F1':>7}")
+best_t, best_f1 = 0.5, 0
+for t in np.arange(0.25, 0.65, 0.05):
+    pred = (oof_proba >= t).astype(int)
+    p = precision_score(y_train, pred)
+    r = recall_score(y_train, pred)
+    f = f1_score(y_train, pred)
+    print(f"{t:<11.2f}{p:>10.3f}{r:>9.3f}{f:>7.3f}")
+    if f > best_f1:
+        best_t, best_f1 = t, f
+print(f"\nBest F1 threshold: {best_t:.2f}")
 
+# Fit on the full training set, then judge ONCE on the untouched test set.
+final_pipe.fit(X_train, y_train)
+test_proba = final_pipe.predict_proba(X_test)[:, 1]
+test_pred = (test_proba >= best_t).astype(int)
+
+print(f"\nTest set at threshold {best_t:.2f}:")
+print(confusion_matrix(y_test, test_pred))
+print(classification_report(y_test, test_pred))
+print("ROC-AUC:", round(roc_auc_score(y_test, test_proba), 4))
