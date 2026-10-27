@@ -52,4 +52,8 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     # almost nothing (ROC-AUC 0.908 -> 0.902).
     clean_df = clean_df.drop(columns=["assigned_room_type", "booking_changes"])
 
+    # The data only covers 2015-2017, so the year can't carry over to future
+    # bookings. Any 2026 date would just look like "2017 or later".
+    clean_df = clean_df.drop(columns=["arrival_date_year"])
+
     return clean_df

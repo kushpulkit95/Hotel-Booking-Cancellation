@@ -89,7 +89,12 @@ for name, model in models.items():
 
 final_pipe = Pipeline([
     ("preprocess", preprocessor),
-    ("model", RandomForestClassifier(n_estimators=200, n_jobs=-1, random_state=42)),
+    ("model", RandomForestClassifier(
+        n_estimators=200,
+        min_samples_leaf=3,   # new: smaller trees, smaller file
+        n_jobs=-1,
+        random_state=42,
+    )),
 ])
 
 # cross_val_predict trains on part of the training data and predicts the rest,
