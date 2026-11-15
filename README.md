@@ -212,5 +212,5 @@ Dataset: *Hotel Booking Demand* by Nuno Antonio, Ana de Almeida and Luis Nunes (
 
 ## Authors
 
-Pulkit Kush
-LinkedIn: https://www.linkedin.com/in/pulkit-kush-7439a734a/
+- Pulkit Kush
+- LinkedIn: https://www.linkedin.com/in/pulkit-kush-7439a734a/
