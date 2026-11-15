@@ -1,140 +1,93 @@
-import numpy as np
-import joblib
 from pathlib import Path
-from sklearn.compose import ColumnTransformer
+
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.base import clone
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (
-    classification_report, confusion_matrix,
-    f1_score, precision_score, recall_score, roc_auc_score,
-)
+from sklearn.metrics import (accuracy_score, classification_report, confusion_matrix,
+                             f1_score, precision_score, recall_score, roc_auc_score)
 from sklearn.model_selection import cross_val_predict, train_test_split
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.tree import DecisionTreeClassifier
 
-from src.preprocessing import clean_data, load_raw_data
+from src.preprocessing import build_pipeline, clean_data, load_raw_data
 
-df = clean_data(load_raw_data())
+RANDOM_STATE = 42
+
+# ---- Stage A/B/F: load and rule-based cleaning (nothing fitted, so safe before the split) ----
+raw = load_raw_data()
+df = clean_data(raw)
+print("Raw shape:", raw.shape, "-> cleaned shape:", df.shape)
+
 X = df.drop(columns=["is_canceled"])
 y = df["is_canceled"]
+
+# ---- Stage H: split BEFORE anything is fitted. The pipeline below fits its scaler, encoder and
+# feature selectors on X_train only. stratify keeps the cancel ratio equal in both parts.
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
-)
+    X, y, test_size=0.2, random_state=RANDOM_STATE, stratify=y)
+print("Train:", X_train.shape, "Test:", X_test.shape)
 
-# Numeric = anything pandas recognises as a number; everything else is text/category.
-# Selecting this way avoids depending on how pandas labels string columns.
-numeric_cols = X.select_dtypes(include="number").columns.tolist()
-categorical_cols = [c for c in X.columns if c not in numeric_cols]
 
-# Models only understand numbers. One-hot encoding turns each category
-# (e.g. deposit_type = "Non Refund") into its own 0/1 column.
-# handle_unknown="ignore" stops the app from crashing later if a user
-# enters a category the model never saw in training.
-# StandardScaler puts numeric columns on a similar scale. Logistic Regression
-# is sensitive to this (lead_time goes up to 700, adults is 1-4).
-preprocessor = ColumnTransformer([
-    ("num", StandardScaler(), numeric_cols),
-    ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols),
-])
+def evaluate(name, y_true, pred, proba):
+    return {"model": name,
+            "accuracy": accuracy_score(y_true, pred),
+            "precision": precision_score(y_true, pred),
+            "recall": recall_score(y_true, pred),
+            "f1": f1_score(y_true, pred),
+            "roc_auc": roc_auc_score(y_true, proba)}
 
-# Bundling preprocessing + model in one Pipeline means the scaler/encoder are
-# fit on TRAIN data only (no peeking at test), and the backend can later load
-# this single object and feed it raw booking details.
-baseline = Pipeline([
-    ("preprocess", preprocessor),
-    ("model", LogisticRegression(max_iter=1000)),
-])
 
-baseline.fit(X_train, y_train)
-
-y_pred = baseline.predict(X_test)
-y_proba = baseline.predict_proba(X_test)[:, 1]
-
-print("Always-predict-0 accuracy:", round((y_test == 0).mean(), 4))
-print("\nConfusion matrix:")
-print(confusion_matrix(y_test, y_pred))
-print("\n", classification_report(y_test, y_pred))
-print("ROC-AUC:", round(roc_auc_score(y_test, y_proba), 4))
-
-# Same preprocessing for every model so the comparison is fair:
-# only the model changes, nothing else.
+# ---- Stage H: compare a simple baseline with a stronger model, same preprocessing for both ----
 models = {
     "Logistic Regression": LogisticRegression(max_iter=1000),
-    # max_depth limits how deep the tree grows. An unlimited tree memorises
-    # the training data (overfitting) and does worse on new bookings.
-    "Decision Tree": DecisionTreeClassifier(max_depth=10, random_state=42),
-    # Random Forest = many trees voting. Averaging reduces overfitting.
-    # n_jobs=-1 uses all CPU cores to speed it up.
-    "Random Forest": RandomForestClassifier(
-        n_estimators=200, n_jobs=-1, random_state=42
-    ),
+    "Random Forest": RandomForestClassifier(n_estimators=200, min_samples_leaf=3, n_jobs=-1,
+                                            random_state=RANDOM_STATE),
 }
-
-print("\nModel comparison (class 1 = cancelled):")
-print(f"{'Model':<22}{'Precision':>10}{'Recall':>9}{'F1':>7}{'ROC-AUC':>9}")
-
+results, pipes = [], {}
 for name, model in models.items():
-    pipe = Pipeline([("preprocess", preprocessor), ("model", model)])
+    pipe = build_pipeline(model, RANDOM_STATE)
     pipe.fit(X_train, y_train)
-    pred = pipe.predict(X_test)
-    proba = pipe.predict_proba(X_test)[:, 1]
-    print(
-        f"{name:<22}"
-        f"{precision_score(y_test, pred):>10.3f}"
-        f"{recall_score(y_test, pred):>9.3f}"
-        f"{f1_score(y_test, pred):>7.3f}"
-        f"{roc_auc_score(y_test, proba):>9.3f}"
-    )
+    pipes[name] = pipe
+    results.append(evaluate(name, y_test, pipe.predict(X_test), pipe.predict_proba(X_test)[:, 1]))
 
-final_pipe = Pipeline([
-    ("preprocess", preprocessor),
-    ("model", RandomForestClassifier(
-        n_estimators=200,
-        min_samples_leaf=3,   # new: smaller trees, smaller file
-        n_jobs=-1,
-        random_state=42,
-    )),
-])
+print("\nAlways-predict-0 accuracy:", round((y_test == 0).mean(), 4))
+print(pd.DataFrame(results).set_index("model").round(3))
 
-# cross_val_predict trains on part of the training data and predicts the rest,
-# so every training row gets a probability from a model that never saw it.
-# That gives honest probabilities to tune the threshold on, without touching X_test.
-oof_proba = cross_val_predict(
-    final_pipe, X_train, y_train, cv=3, method="predict_proba"
-)[:, 1]
+# ---- Stage G: how many features did each step keep? (before / after counts) ----
+final_pipe = pipes["Random Forest"]
+labels = {"preprocess": "after encoding + binning + scaling", "variance": "after variance threshold",
+          "correlation": "after correlation filter", "importance": "after importance selection"}
+print("\nFeature counts")
+print(f"  raw columns: {raw.shape[1] - 1}")
+print(f"  after cleaning: {X_train.shape[1]}")
+for i, (step, _) in enumerate(final_pipe.steps[:-1], start=1):
+    print(f"  {labels[step]}: {final_pipe[:i].transform(X_train).shape[1]}")
 
-print("\nThreshold tuning (on training data, out-of-fold):")
+# ---- Threshold tuning on out-of-fold TRAIN predictions (the test set stays untouched) ----
+# Every training row gets a probability from a model that never saw it. The whole pipeline,
+# including the scaler and selectors, is refitted inside each fold, so there is no leakage.
+oof = cross_val_predict(clone(final_pipe), X_train, y_train, cv=3, method="predict_proba")[:, 1]
+best_t, best_f1 = 0.5, 0.0
+print("\nThreshold tuning (out-of-fold, train only):")
 print(f"{'Threshold':<11}{'Precision':>10}{'Recall':>9}{'F1':>7}")
-best_t, best_f1 = 0.5, 0
 for t in np.arange(0.25, 0.65, 0.05):
-    pred = (oof_proba >= t).astype(int)
-    p = precision_score(y_train, pred)
-    r = recall_score(y_train, pred)
-    f = f1_score(y_train, pred)
-    print(f"{t:<11.2f}{p:>10.3f}{r:>9.3f}{f:>7.3f}")
-    if f > best_f1:
-        best_t, best_f1 = t, f
+    p = (oof >= t).astype(int)
+    f1 = f1_score(y_train, p)
+    print(f"{t:<11.2f}{precision_score(y_train, p):>10.3f}{recall_score(y_train, p):>9.3f}{f1:>7.3f}")
+    if f1 > best_f1:
+        best_t, best_f1 = float(t), f1
 print(f"\nBest F1 threshold: {best_t:.2f}")
 
-# Fit on the full training set, then judge ONCE on the untouched test set.
-final_pipe.fit(X_train, y_train)
 test_proba = final_pipe.predict_proba(X_test)[:, 1]
 test_pred = (test_proba >= best_t).astype(int)
-
 print(f"\nTest set at threshold {best_t:.2f}:")
 print(confusion_matrix(y_test, test_pred))
 print(classification_report(y_test, test_pred))
 print("ROC-AUC:", round(roc_auc_score(y_test, test_proba), 4))
 
+# ---- Save: one file with the whole pipeline + decision threshold ----
 Path("model").mkdir(exist_ok=True)
-joblib.dump(
-    {
-        "pipeline": final_pipe,
-        "threshold": float(best_t),
-        "feature_columns": X.columns.tolist(),
-    },
-    "model/hotel_cancellation_model.pkl",
-    compress=3,
-)
+joblib.dump({"pipeline": final_pipe, "threshold": best_t, "feature_columns": X.columns.tolist()},
+            "model/hotel_cancellation_model.pkl", compress=3)
 print("\nModel saved to model/hotel_cancellation_model.pkl")

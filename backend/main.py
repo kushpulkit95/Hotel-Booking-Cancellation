@@ -11,6 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+import src.preprocessing  # noqa: E402,F401
 
 # Load once at startup, not per request. Loading an 80 MB model on every
 # prediction would make the API painfully slow.
